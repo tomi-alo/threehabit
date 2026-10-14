@@ -5,9 +5,10 @@ import {
   capMessage,
   isDay,
   missNote,
-  nextPosition,
+  previousDay,
   type CheckinRecord,
   type CheckinStatus,
+  type HabitOption,
   type HabitPosition,
   type HabitRecord,
 } from "@/lib/habits";
@@ -16,13 +17,14 @@ import { createClient } from "@/lib/supabase/server";
 export type Board = {
   habits: HabitRecord[];
   checkins: CheckinRecord[];
+  suggestions: HabitOption[];
+  library: HabitOption[];
   error: string | null;
 };
 
-type HabitRow = {
-  id: string;
-  name: string;
+type CommitmentRow = {
   position: number;
+  habits: HabitOption | HabitOption[] | null;
 };
 
 type CheckinRow = {
@@ -41,6 +43,11 @@ function asStatus(status: string): CheckinStatus {
   throw new Error("Check-in status is not done or missed.");
 }
 
+function relatedHabit(relation: CommitmentRow["habits"]): HabitOption | null {
+  if (Array.isArray(relation)) return relation[0] ?? null;
+  return relation;
+}
+
 async function requireUser() {
   const supabase = await createClient();
   const {
@@ -52,52 +59,96 @@ async function requireUser() {
 
 export async function loadBoard(day: string): Promise<Board> {
   if (!isDay(day)) {
-    return { habits: [], checkins: [], error: "That date is not valid." };
+    return {
+      habits: [],
+      checkins: [],
+      suggestions: [],
+      library: [],
+      error: "That date is not valid.",
+    };
   }
 
   try {
     const { supabase, user } = await requireUser();
-    const { data: habitRows, error } = await supabase
-      .from("habits")
-      .select("id, name, position")
-      .eq("user_id", user.id)
-      .order("position");
+    const empty = {
+      habits: [],
+      checkins: [],
+      suggestions: [],
+      library: [],
+    };
+    const [commitmentsResult, libraryResult, suggestionsResult] = await Promise.all([
+      supabase
+        .from("commitments")
+        .select("position, habits!inner(id, name)")
+        .eq("user_id", user.id)
+        .eq("day", day)
+        .order("position"),
+      supabase
+        .from("habits")
+        .select("id, name")
+        .eq("user_id", user.id)
+        .order("name"),
+      supabase
+        .from("commitments")
+        .select("position, habits!inner(id, name)")
+        .eq("user_id", user.id)
+        .eq("day", previousDay(day))
+        .order("position"),
+    ]);
 
-    if (error) return { habits: [], checkins: [], error: error.message };
+    const queryError =
+      commitmentsResult.error ?? libraryResult.error ?? suggestionsResult.error;
+    if (queryError) return { ...empty, error: queryError.message };
 
-    const habits = ((habitRows ?? []) as HabitRow[]).map((row) => ({
-      id: row.id,
-      name: row.name,
-      position: asPosition(row.position),
-    }));
+    const habits = ((commitmentsResult.data ?? []) as CommitmentRow[])
+      .map((row) => {
+        const habit = relatedHabit(row.habits);
+        return habit
+          ? { ...habit, position: asPosition(row.position) }
+          : null;
+      })
+      .filter((habit): habit is HabitRecord => habit !== null);
 
-    if (habits.length === 0) return { habits, checkins: [], error: null };
+    const selectedIds = new Set(habits.map((habit) => habit.id));
+    const yesterday = ((suggestionsResult.data ?? []) as CommitmentRow[])
+      .map((row) => relatedHabit(row.habits))
+      .filter((habit): habit is HabitOption => habit !== null);
+    const suggestions = yesterday.filter((habit) => !selectedIds.has(habit.id));
+    const suggestionIds = new Set(suggestions.map((habit) => habit.id));
+    const library = ((libraryResult.data ?? []) as HabitOption[]).filter(
+      (habit) => !selectedIds.has(habit.id) && !suggestionIds.has(habit.id),
+    );
 
-    const { data: checkinRows, error: checkinError } = await supabase
-      .from("checkins")
-      .select("habit_id, status, miss_note")
-      .eq("user_id", user.id)
-      .eq("day", day)
-      .in(
-        "habit_id",
-        habits.map((habit) => habit.id),
-      );
+    let checkins: CheckinRecord[] = [];
+    if (habits.length > 0) {
+      const { data: checkinRows, error: checkinError } = await supabase
+        .from("checkins")
+        .select("habit_id, status, miss_note")
+        .eq("user_id", user.id)
+        .eq("day", day)
+        .in(
+          "habit_id",
+          habits.map((habit) => habit.id),
+        );
 
-    if (checkinError) {
-      return { habits, checkins: [], error: checkinError.message };
+      if (checkinError) {
+        return { habits, checkins, suggestions, library, error: checkinError.message };
+      }
+
+      checkins = ((checkinRows ?? []) as CheckinRow[]).map((row) => ({
+        habitId: row.habit_id,
+        status: asStatus(row.status),
+        missNote: row.miss_note,
+      }));
     }
 
-    const checkins = ((checkinRows ?? []) as CheckinRow[]).map((row) => ({
-      habitId: row.habit_id,
-      status: asStatus(row.status),
-      missNote: row.miss_note,
-    }));
-
-    return { habits, checkins, error: null };
+    return { habits, checkins, suggestions, library, error: null };
   } catch (error) {
     return {
       habits: [],
       checkins: [],
+      suggestions: [],
+      library: [],
       error: error instanceof Error ? error.message : "Could not load habits.",
     };
   }
@@ -115,30 +166,14 @@ export async function addHabit(name: string, day: string) {
   if (!isDay(day)) return { error: "That date is not valid.", board: null };
 
   try {
-    const { supabase, user } = await requireUser();
-    const { data: existing, error } = await supabase
-      .from("habits")
-      .select("position")
-      .eq("user_id", user.id);
-
-    if (error) return { error: error.message, board: null };
-
-    const rows = (existing ?? []) as { position: number }[];
-    const blocked = capMessage(rows.length);
-    if (blocked) return { error: blocked, board: null };
-
-    const position = nextPosition(rows.map((row) => row.position));
-    if (position === null) {
-      return { error: capMessage(3), board: null };
-    }
-
-    const { error: insertError } = await supabase.from("habits").insert({
-      user_id: user.id,
-      name: trimmed,
-      position,
+    const { supabase } = await requireUser();
+    const { error } = await supabase.rpc("set_commitment", {
+      p_day: day,
+      p_habit_id: null,
+      p_name: trimmed,
     });
 
-    if (insertError) return { error: insertError.message, board: null };
+    if (error) return { error: commitmentError(error), board: null };
     return boardAfterChange(day, null);
   } catch (error) {
     return {
@@ -146,6 +181,36 @@ export async function addHabit(name: string, day: string) {
       board: null,
     };
   }
+}
+
+export async function selectHabit(habitId: string, day: string) {
+  if (!habitId) return { error: "Choose a habit.", board: null };
+  if (!isDay(day)) return { error: "That date is not valid.", board: null };
+
+  try {
+    const { supabase } = await requireUser();
+    const { error } = await supabase.rpc("set_commitment", {
+      p_day: day,
+      p_habit_id: habitId,
+      p_name: null,
+    });
+
+    if (error) return { error: commitmentError(error), board: null };
+    return boardAfterChange(day, null);
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : "Could not choose the habit.",
+      board: null,
+    };
+  }
+}
+
+function commitmentError(error: { code?: string; message: string }): string {
+  if (error.code !== "23505") return error.message;
+  if (error.message.includes("already committed")) {
+    return "That habit is already committed today.";
+  }
+  return capMessage(3) ?? error.message;
 }
 
 export async function markDone(habitId: string, day: string) {

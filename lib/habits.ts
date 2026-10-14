@@ -10,6 +10,11 @@ export type HabitRecord = {
   position: HabitPosition;
 };
 
+export type HabitOption = {
+  id: string;
+  name: string;
+};
+
 export type CheckinRecord = {
   habitId: string;
   status: CheckinStatus;
@@ -28,9 +33,17 @@ export function nextPosition(positions: number[]): HabitPosition | null {
 
 export function capMessage(count: number): string | null {
   if (count >= HABIT_CAP) {
-    return "Three habits is the commitment. Remove one before adding another.";
+    return "Three habits is the commitment. Tomorrow, choose again.";
   }
   return null;
+}
+
+export function normalizeHabitName(name: string): string {
+  return name.trim().toLocaleLowerCase();
+}
+
+export function isHabitSelected(selectedHabitIds: string[], habitId: string): boolean {
+  return selectedHabitIds.includes(habitId);
 }
 
 export function missNote(note: string): string {
@@ -59,4 +72,11 @@ export function localDay(date = new Date()): string {
 
 export function isDay(value: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+export function previousDay(day: string): string {
+  if (!isDay(day)) throw new Error("That date is not valid.");
+  const [year, month, date] = day.split("-").map(Number);
+  const previous = new Date(Date.UTC(year, month - 1, date - 1));
+  return previous.toISOString().slice(0, 10);
 }

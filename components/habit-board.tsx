@@ -7,6 +7,7 @@ import {
   loadBoard,
   markDone,
   markMissed,
+  selectHabit,
   signOut,
   type Board,
 } from "@/app/actions";
@@ -54,8 +55,17 @@ export function HabitBoard({ email }: { email: string }) {
     apply(await addHabit(String(formData.get("name") ?? ""), day));
   }
 
+  async function onSelect(habitId: string) {
+    if (!day) return;
+    setPending(true);
+    setError(null);
+    apply(await selectHabit(habitId, day));
+  }
+
   const habits = board?.habits ?? [];
   const checkins = board?.checkins ?? [];
+  const suggestions = board?.suggestions ?? [];
+  const library = board?.library ?? [];
   const blocked = capMessage(habits.length);
   const finished = allDoneToday(habits.length, checkins);
 
@@ -80,11 +90,13 @@ export function HabitBoard({ email }: { email: string }) {
         </div>
       </div>
 
-      {finished ? <p className="done-banner">All three are done today.</p> : null}
+      {finished ? <p className="done-banner">Every commitment is done today.</p> : null}
       {error ? <p className="message">{error}</p> : null}
 
       {board && habits.length === 0 ? (
-        <p className="empty">Pick the three things you will actually do. Not thirty.</p>
+        <p className="empty">
+          Choose up to three things for today. Once chosen, they stay for the day.
+        </p>
       ) : null}
 
       <ol className="habits">
@@ -95,6 +107,7 @@ export function HabitBoard({ email }: { email: string }) {
               <div className="habit-row">
                 <span className="index">0{habit.position}</span>
                 <span className="name">{habit.name}</span>
+                <span className="locked">Locked today</span>
                 <span className="actions">
                   <button
                     type="button"
@@ -151,15 +164,61 @@ export function HabitBoard({ email }: { email: string }) {
       {blocked ? (
         <p className="message">{blocked}</p>
       ) : (
-        <form action={onAdd} className="add-form">
-          <label>
-            Add a habit
-            <input name="name" maxLength={80} required placeholder="One thing you will do" />
-          </label>
-          <button type="submit" className="primary" disabled={pending || !day}>
-            Add
-          </button>
-        </form>
+        <div className="chooser">
+          {suggestions.length > 0 ? (
+            <div>
+              <p className="chooser-title">Yesterday’s choices</p>
+              <div className="suggestions">
+                {suggestions.map((habit) => (
+                  <button
+                    key={habit.id}
+                    type="button"
+                    disabled={pending || !day}
+                    onClick={() => void onSelect(habit.id)}
+                  >
+                    Choose {habit.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {library.length > 0 ? (
+            <form
+              className="add-form"
+              action={(formData) => {
+                void onSelect(String(formData.get("habitId") ?? ""));
+              }}
+            >
+              <label>
+                Choose an old habit
+                <select name="habitId" defaultValue="" required>
+                  <option value="" disabled>
+                    Select a habit
+                  </option>
+                  {library.map((habit) => (
+                    <option key={habit.id} value={habit.id}>
+                      {habit.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button type="submit" className="primary" disabled={pending || !day}>
+                Choose
+              </button>
+            </form>
+          ) : null}
+
+          <form action={onAdd} className="add-form">
+            <label>
+              Add a new habit
+              <input name="name" maxLength={80} required placeholder="One thing you will do" />
+            </label>
+            <button type="submit" className="primary" disabled={pending || !day}>
+              Choose
+            </button>
+          </form>
+        </div>
       )}
     </section>
   );

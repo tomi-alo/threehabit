@@ -3,9 +3,12 @@ import { describe, it } from "node:test";
 import {
   allDoneToday,
   capMessage,
+  isHabitSelected,
   localDay,
   missNote,
   nextPosition,
+  normalizeHabitName,
+  previousDay,
 } from "./habits.ts";
 
 describe("habit cap", () => {
@@ -38,6 +41,23 @@ describe("today", () => {
 
   it("formats the local calendar day", () => {
     assert.equal(localDay(new Date(2026, 9, 14)), "2026-10-14");
+  });
+
+  it("finds the previous calendar day across month and year boundaries", () => {
+    assert.equal(previousDay("2026-10-14"), "2026-10-13");
+    assert.equal(previousDay("2026-01-01"), "2025-12-31");
+  });
+});
+
+describe("daily selections", () => {
+  it("recognizes a habit already selected today", () => {
+    assert.equal(isHabitSelected(["walk", "read"], "walk"), true);
+    assert.equal(isHabitSelected(["walk", "read"], "sleep"), false);
+  });
+
+  it("normalizes typed names so they can reuse an existing habit", () => {
+    assert.equal(normalizeHabitName("  Morning Walk "), "morning walk");
+    assert.equal(normalizeHabitName("MORNING WALK"), "morning walk");
   });
 });
 

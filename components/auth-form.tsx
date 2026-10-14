@@ -29,7 +29,7 @@ export function AuthForm() {
     <section className="panel">
       <h1>{mode === "sign-in" ? "Sign in" : "Create an account"}</h1>
       <p className="lede">
-        Your three habits stay with this account. A refresh will still know who you are.
+        Choose up to three commitments for today. Tomorrow, choose again.
       </p>
       <form action={onSubmit} className="stack">
         <label>
